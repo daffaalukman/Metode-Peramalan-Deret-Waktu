@@ -1,0 +1,246 @@
+---
+title: "MPDW PRAKTIKUM 2 Bagian Sales dan Advert"
+author: "Daffa Lukman Wahid Al Jailani"
+date: "2026-05-25"
+output: rmdformats::downcute
+---
+# SOAL 1
+## PREPARASI DATA
+
+```{r}
+library(readxl)
+salesdata <- read_excel("C:\\Users\\Lenovo\\Downloads\\Data MPDW Prak.xlsx", sheet = "Sheet2")
+colnames(salesdata) <- c("Y", paste0("X", 1))
+data.frame(salesdata)
+```
+
+## EKSPLORASI
+
+```{r}
+#install.packages(c("dplyr", "ggplot2", "psych", "GGally", "corrplot", "TTR", "forecast", "lmtest", "orcutt", "HoRM"))
+library(dplyr)
+library(ggplot2)
+library(psych)
+library(GGally)
+library(corrplot)
+library(TTR)
+library(forecast)
+library(lmtest) 
+library(orcutt) #untuk membuat model regresi Cochrane-Orcutt
+library(HoRM) #untuk membuat model regresi Hildreth-Lu
+```
+
+```{r}
+# Struktur data
+str(salesdata)
+# Statistik Deskriptif
+describe(salesdata)
+```
+
+## OLS
+
+```{r}
+model <- lm(
+  Y ~ X1,
+  data = salesdata
+)
+
+summary(model)
+```
+
+Didapat model OLS:
+$$
+Y = 5.965+0.710X_1
+$$
+## DIAGNOSTIK
+
+```{r}
+#sisaan dan fitted value
+sisaan<- residuals(model)
+fitValue<- predict(model)
+
+#Diagnostik dengan eksploratif
+par(mfrow = c(2,2))
+qqnorm(sisaan)
+qqline(sisaan, 
+       col = "steelblue", 
+       lwd = 2)
+
+hist(sisaan, 
+     col = "steelblue")
+plot(seq_along(sisaan), sisaan, 
+     col = "steelblue", 
+     pch = 20, 
+     xlab = "Sisaan", 
+     ylab = "Order", 
+     main = "Sisaan vs Order")
+lines(seq_along(sisaan), 
+      sisaan, 
+      col = "red")
+abline(a = 0, b = 0, lwd = 2)
+```
+## NORMALITAS SISAAN
+```{r}
+#Melihat Sisaan Menyebar Normal/Tidak
+#H0: sisaan mengikuti sebaran normal
+#H1: sisaan tidak mengikuti sebaran normal
+shapiro.test(sisaan)
+ks.test(sisaan, "pnorm", mean=mean(sisaan), sd=sd(sisaan))
+```
+Berdasarkan uji formal, terdapat perbedaan hasil antara kedua uji. Uji Shapiro-Wilk menghasilkan p-value = 0.0188 (< 0.05), sehingga H0 ditolak dan disimpulkan sisaan tidak menyebar normal. Namun, uji Kolmogorov-Smirnov menghasilkan p-value = 0.2948 (> 0.05), sehingga gagal tolak H0 dan sisaan dianggap menyebar normal. hasil Shapiro-Wilk yang lebih diutamakan, sehingga disimpulkan sisaan belum sepenuhnya
+menyebar normal.
+
+## AUTOKORELASI
+
+```{r}
+par(mfrow = c(1,2))
+acf(sisaan)
+pacf(sisaan)
+```
+Berdasarkan plot ACF, terlihat banyak lag yang keluar dari batas signifikansi dan meluruh secara perlahan (slowly decaying),pada plot PACF hanya lag 1 yang signifikan lalu langsung terputus (cuts off) pada lag-lag berikutnya. Untuk memastikan hal ini, akan dilakukan uji formal dengan uji Durbin-Watson.
+
+```{r}
+#Deteksi autokorelasi dengan uji-Durbin Watson
+#H0: tidak ada autokorelasi
+#H1: ada autokorelasi
+dwtest(model)
+```
+Berdasarkan hasil DW Test, didapatkan nilai $DW = 0.16204$ dan *p-value* $< 2.2\times10^{-16}$. Berdasarkan tabel Durbin-Watson untuk $n=40$ dan $k=1$ diperoleh nilai $D_L = 1.442$ dan $D_U = 1.544$. Nilai DW jauh berada di bawah nilai $D_L$, bahkan mendekati 0. Artinya, berada di daerah penolakan H0. Didukung dengan nilai *p-value* yang sangat kecil (jauh \< 0.05), tolak H0, cukup bukti mengatakan adanya autokorelasi positif yang sangat kuat pada sisaan. Sehingga diperlukan penanganan autokorelasi. Penanganan yang akan digunakan menggunakan dua metode, yaitu Cochrane-Orcutt dan Hildreth-Lu.
+
+## PENANGANAN AUTOKORELASI
+
+### Cochrane-Orcutt
+```{r}
+#Penanganan Autokorelasi Cochrane-Orcutt
+modelCO<-cochrane.orcutt(model)
+modelCO
+rho <- modelCO$rho
+```
+Hasil keluaran model setelah dilakukan penanganan adalah sebagai berikut. $$Y = 10.252375 + 0.488489X_1$$
+Hasil juga menunjukkan bahwa nilai DW dan p-value meningkat menjadi $1.93925$ dan $0.378$. Nilai DW sudah berada pada rentang DU \< DW \< 4-DU atau $1.544 < DW < 2.456$. Hal tersebut juga didukung dengan nilai *p-value* \> 0.05, artinya belum cukup bukti menyatakan bahwa sisaan terdapat autokorelasi pada taraf
+nyata 5%. Untuk nilai $\hat{\rho}$ optimum yang digunakan adalah $0.903123$.
+
+```{r}
+salesdata$Y
+salesdata$X1
+```
+```{r}
+salesdata$Y[-1]
+salesdata$X1[-1]
+```
+```{r}
+#Transformasi Manual
+Y.trans<- salesdata$Y[-1]-salesdata$Y[-20]*rho
+X.trans<- salesdata$X1[-1]-salesdata$X1[-20]*rho
+modelCOmanual<- lm(Y.trans~X.trans)
+summary(modelCOmanual)
+```
+```{r}
+#Mencari Penduga Koefisien Regresi setelah Transformasi ke Persamaan Awal
+b0bintang <- modelCOmanual$coefficients[-2]
+b0 <- b0bintang/(1-rho)
+b1 <- modelCOmanual$coefficients[-1]
+b0
+b1
+```
+
+Hasil ini akan sama jika kita menggunakan metode Huldret-Lu, 
+
+### Hildret-Lu
+
+```{r}
+
+# ambil y dan x (satu prediktor saja)
+y <- salesdata$Y
+x <- salesdata$X1
+
+# grid search rho 0–0.9
+r <- seq(0, 0.9, by = 0.1)
+tab <- data.frame(
+  rho = r,
+  SSE = sapply(r, function(rr) deviance(hildreth.lu(y, x, rr)))
+)
+
+tab            # tabel rho vs SSE
+rho_hat <- tab$rho[which.min(tab$SSE)]   # rho terbaik
+fit_hl  <- hildreth.lu(y, x, rho_hat)    # model final
+summary(fit_hl)
+```
+
+```{r}
+#Penanganan Autokorelasi Hildreth lu
+# Hildreth-Lu
+hildreth.lu.func<- function(r, model){
+  x <- model.matrix(model)[,-1]
+  y <- model.response(model.frame(model))
+  n <- length(y)
+  t <- 2:n
+  y <- y[t]-r*y[t-1]
+  x <- x[t]-r*x[t-1]
+  
+  return(lm(y~x))
+}
+
+#Pencariab rho yang meminimumkan SSE
+r <- c(seq(0.1,0.9, by= 0.1))
+tab <- data.frame("rho" = r, "SSE" = sapply(r, function(i){deviance(hildreth.lu.func(i, model))}))
+round(tab, 4)
+```
+Pertama-tama akan dicari di mana kira-kira $\rho$ yang menghasilkan SSE minimum. Pada hasil di atas terlihat SSE masih terus menurun hingga $\rho = 0.9$ (titik terakhir pada grid pencarian), sehingga rho optimum diperkirakan berada di sekitar atau di atas 0.9, berbeda dengan pola pada data referensi yang minimum di sekitar 0.4. Namun, hasil tersebut masih kurang teliti sehingga akan dicari kembali $\rho$ yang lebih optimum dengan ketelitian yang lebih. Jarak antar $\rho$ yang dicari sebelumnya adalah 0.1, kali ini jarak antar $\rho$ adalah 0.001 dan dilakukan pada selang 0.8 sampai dengan 0.99.
+
+```{r}
+#Rho optimal di sekitar 0.9
+rOpt <- seq(0.8,0.99, by= 0.001)
+tabOpt <- data.frame("rho" = rOpt, "SSE" = sapply(rOpt, function(i){deviance(hildreth.lu.func(i, model))}))
+head(tabOpt[order(tabOpt$SSE),])
+```
+
+```{r}
+#Grafik SSE optimum
+par(mfrow = c(1,1))
+plot(tab$SSE ~ tab$rho , type = "l", xlab = "Rho", ylab = "SSE")
+abline(v = tabOpt[tabOpt$SSE==min(tabOpt$SSE),"rho"], lty = 2, col="red",lwd=2)
+text(x=0.903, y=1.291226, labels = "rho=0.903", cex = 0.8)
+```
+
+Perhitungan yang dilakukan aplikasi `R` menunjukkan bahwa nilai $\rho$ optimum, yaitu saat SSE terkecil, terdapat pada nilai $\rho=0.903$. Hal tersebut juga ditunjukkan pada plot. Selanjutnya, model dapat didapatkan dengan mengevaluasi nilai $\rho$ ke dalam fungsi `hildreth.lu.func`, serta dilanjutkan dengan pengujian autokorelasi dengan uji Durbin-Watson. Namun, setelah pengecekan tersebut tidak lupa koefisien regresi tersebut digunakan untuk transformasi balik. Persamaan hasil transformasi itulah yang menjadi persamaan sesungguhnya.
+
+```{r}
+#Model terbaik
+modelHL <- hildreth.lu.func(0.903, model)
+summary(modelHL)
+
+#Transformasi Balik
+cat("y = ", coef(modelHL)[1]/(1-0.903), "", coef(modelHL)[2],"x", sep = "")
+```
+Setelah dilakukan tranformasi balik, didapatkan model dengan metode Hildreth-Lu sebagai berikut. $$y = 10.247490.4886925x$$
+
+## PEMERIKSAAN ULANG AUTOKORELASI
+```{r}
+#Deteksi autokorelasi
+dwtest(modelHL)
+```
+
+Hasil tes Durbin-Watson menunjukkan bahwa nilai DW dan p-value menjadi $1.9393$ dan $0.378$. Nilai DW sudah berada pada rentang DU \< DW \< 4-DU atau $1.544 < DW < 2.456$. Hal tersebut juga didukung dengan nilai *p-value* \> 0.05, artinya belum cukup bukti menyatakan bahwa sisaan terdapat autokorelasi pada taraf
+nyata 5%.
+
+## PERBANDINGAN METODE
+
+```{r}
+#Perbandingan
+sseModelawal <- anova(model)$`Sum Sq`[-1]
+sseModelCO <- anova(modelCOmanual)$`Sum Sq`[-1]
+sseModelHL <- anova(modelHL)$`Sum Sq`[-1]
+mseModelawal <- sseModelawal/nrow(salesdata)
+mseModelCO <- sseModelCO/nrow(salesdata)
+mseModelHL <- sseModelHL/nrow(salesdata)
+akurasi <- matrix(c(sseModelawal,sseModelCO,sseModelHL,
+                    mseModelawal,mseModelCO,mseModelHL),nrow=2,ncol=3,byrow = T)
+colnames(akurasi) <- c("Model Awal", "Model Cochrane-Orcutt", "Model Hildreth-Lu")
+row.names(akurasi) <- c("SSE","MSE")
+akurasi
+```
+Dari hasil perbandingan, nilai SSE dan MSE model Cochrane-Orcutt dan model Hildreth-Lu sama-sama lebih kecil (lebih baik) dibandingkan model awal. Tetapi model Cochrane-Orcutt memiliki SSE dan MSE yang lebih kecil dibandingkan model Hildreth-Lu, Dapat dibuktikan jika model Cochrane-Orcutt merupakan model terbaik di antara ketiganya.
+
+
+
